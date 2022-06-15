@@ -22,13 +22,11 @@ colleagues to understand the probability of getting a tip from your customers.
 reserve a particularly gentle treatment for a specific subset of customers.
 <br>
 ![](architectures/thumbnails/chicago.jpg)
-- The city of Chicago has collected information about most of the taxi trips that have occurred
-since 2013. This dataset is available in the BigQuery public datasets marketplace `(https://
-console.cloud.google.com/marketplace/details/city-of-chicagopublic-
+
+- The city of Chicago has collected information about most of the taxi trips that have occurred since 2013. This dataset is available in the BigQuery public datasets marketplace `(https://console.cloud.google.com/marketplace/details/city-of-chicagopublic-
 data/chicago-taxi-trips)` and can be easily accessed and used.
-- The goal is to leverage the available information about taxi trips, such as the payment
-type, the miles traveled, the fare, and the name of the taxi company, to **predict whether a
-taxi driver will receive a tip at the end of the taxi ride.**
+- The goal is to leverage the available information about taxi trips, such as the payment type, the miles traveled, the fare, and the name of the taxi company, to **predict whether a taxi driver will receive a tip at the end of the taxi ride.**
+
 ----------
 #### Exploring, understanding and visualizing the dataset using Tableau <br>
 - Performed a detailed analysis of the data
