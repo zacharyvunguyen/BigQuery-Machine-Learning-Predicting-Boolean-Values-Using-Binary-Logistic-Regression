@@ -4,16 +4,14 @@
 ------------
 ### Overview:
 - Introducing the business scenario
-- Discovering binary logistic regression
 - Exploring and understanding the dataset
 - Training the binary logistic regression model
 - Evaluating the binary logistic regression model
 - Using the binary logistic regression model
 - Drawing business conclusions
-
-
 ----------
-#### Introducing the business scenario
+#### Introducing the business scenario <br>
+
 - In this section, we'll introduce the business scenario that will be tackled with binary
 logistic regression.
 - Let's take an example wherein you are a taxi driver who is passionate about ML. You're
