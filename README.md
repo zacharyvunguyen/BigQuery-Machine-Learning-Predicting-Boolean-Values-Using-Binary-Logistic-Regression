@@ -31,10 +31,13 @@ reserve a particularly gentle treatment for a specific subset of customers.
 
 - Performed a detailed analysis of the data
 <br>
+
 ![](architectures/notebooks/01_screenshots/Tableau_Distribution.gif)
+
 <br>
 
 ![](architectures/notebooks/01_screenshots/Gif_tips_notips.gif)
+
 <br>
 
 - **To avoid any impact of this event on our analysis, let's focus our implementation only on the year 2019.**
