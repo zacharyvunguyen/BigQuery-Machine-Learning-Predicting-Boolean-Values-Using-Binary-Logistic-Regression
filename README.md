@@ -20,7 +20,7 @@ colleagues to understand the probability of getting a tip from your customers.
 - Getting a tip from a customer is very important for taxi drivers to increase their income.
 - Predicting the probability of getting a tip can be useful to, for example, know when to
 reserve a particularly gentle treatment for a specific subset of customers.
-<br>
+
 
 ![]('https://github.com/zacharyvunguyen/nguyen-demo5/blob/main/architectures/thumbnails/chicago.jpg')
 
@@ -32,16 +32,14 @@ reserve a particularly gentle treatment for a specific subset of customers.
 #### Exploring, understanding and visualizing the dataset using Tableau <br>
 
 - Performed a detailed analysis of the data
-<br>
-![](architectures/notebooks/01_screenshots/Tableau_data connection.gif)
 
 ![](architectures/notebooks/01_screenshots/Tableau_Distribution.gif)
 
-<br>
+
 
 ![](architectures/notebooks/01_screenshots/Gif_tips_notips.gif)
 
-<br>
+
 
 - **To avoid any impact of this event on our analysis, let's focus our implementation only on the year 2019.**
 - We'll split our dataset using a time frame that starts from January 2019 up to October 2019.
@@ -52,7 +50,7 @@ reserve a particularly gentle treatment for a specific subset of customers.
 - Add `tips_label` columns with values:
    - YES (If tips >0)
    - NO (If tips = 0)
- <br>
+
  
 ![](architectures/notebooks/01_screenshots/taxi_prepped table.png)
 
