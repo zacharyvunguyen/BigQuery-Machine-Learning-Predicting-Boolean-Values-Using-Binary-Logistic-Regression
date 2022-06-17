@@ -1,0 +1,297 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "b12372ad-8740-403d-93ad-5ea651a5fda6",
+   "metadata": {},
+   "source": [
+    "# 03c - BQML + Vertex AI > Pipelines - automated pipelines for updating models\n",
+    "As time goes on change occurs:\n",
+    "\n",
+    "* inputs to our models may shift in distribution compared to when the model was trained - called training-serving skew\n",
+    "* inputs to out models may shift over time - called prediction drift\n",
+    "* new inputs/features may become available\n",
+    "* a better model may be created\n",
+    "<br>\n",
+    "\n",
+    "* In the 03b notebook we deployed the model built with BQML in the 03a notebook to a Vertex AI Endpoint for online prediction. \n",
+    "* In this notebook we will build a challenger model with the same training data, also using BQML but with a different model type - a deep neural network similar what we build in the 05 series of ntoebooks. \n",
+    "* We will construct a Vertex AI Pipeline to orchestrate the process of building the new model, comparing to the deployed mode, and conditionally replacing the deployed model with the new one.\n",
+    "\n",
+    "This process could be triggered based on time elapsed, amount of new data, detected training-serving skew or even prediction drift by using Vertex AI Monitoring."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "f6a6277c-147b-4836-b87f-fd1b33b259c1",
+   "metadata": {},
+   "source": [
+    "---\n",
+    "## Prerequisites:\n",
+    "03a - BigQuery Machine Learning (BQML) - Machine Learning with SQL\n",
+    "03b - Vertex AI + BQML - Online Predictions with BQML Models\n",
+    "\n",
+    "---\n",
+    "## Overview:\n",
+    "* Build Custom Pipeline Components\n",
+    "    * Use BigQuery ML to Get Predictions and Scikit-Learn to calculate model metrics\n",
+    "    * Use BigQuery ML to train a new model - A Deep Neural Network\n",
+    "    * Compare model metrics for baseline and challenger model\n",
+    "    * Export BigQuery ML model to Google Cloud Storage\n",
+    "    * Replace a model deployed to an endpoint (03b) with the challenger model, undeploy previous model\n",
+    "* Define the Pipeline Flow\n",
+    "* Compile the Pipeline\n",
+    "* Run the Pipeline in Vertex AI\n",
+    "* Get Predictions from the upated Endpoint"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "4eafce52-961a-4739-a867-d0f25b43b6fb",
+   "metadata": {},
+   "source": [
+    "---\n",
+    "## Setup"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "b9253e28-173e-44a0-9a0c-205dfdb6e610",
+   "metadata": {},
+   "source": [
+    "Inputs:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "be10f36c-4b93-419e-935c-cc8a55de8f84",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "REGION = 'us-central1'\n",
+    "PROJECT_ID='nguyen-demo5'\n",
+    "DATANAME = 'taxi'\n",
+    "NOTEBOOK = '03c'\n",
+    "\n",
+    "# Resources\n",
+    "DEPLOY_IMAGE='us-docker.pkg.dev/vertex-ai/prediction/tf2-cpu.2-3:latest'\n",
+    "DEPLOY_COMPUTE = 'n1-standard-4'\n",
+    "\n",
+    "# Model Training\n",
+    "VAR_TARGET = 'tips_label'\n",
+    "#  Based on the best result among the models, we selected the logistic regression model VERSION 4: taxi_lr_v4 for our online prediction.\n",
+    "VAR_OMIT= 'unique_key taxi_id trip_start_timestamp trip_end_timestamp trip_miles pickup_census_tract dropoff_census_tract pickup_community_area dropoff_community_area tips extras trip_total pickup_latitude pickup_longitude dropoff_latitude dropoff_longitude' # add more variables to the string with space delimiters"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "159bd391-e9cc-415f-b72f-ee09f11ea00d",
+   "metadata": {},
+   "source": [
+    "Packages:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "id": "ba9f574e-07ca-410b-87f2-d2f81dd30ca2",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from google.cloud import aiplatform\n",
+    "from datetime import datetime\n",
+    "from typing import NamedTuple\n",
+    "import kfp # used for dsl.pipeline\n",
+    "import kfp.v2.dsl as dsl # used for dsl.component, dsl.Output, dsl.Input, dsl.Artifact, dsl.Model, ...\n",
+    "from google_cloud_pipeline_components import aiplatform as gcc_aip\n",
+    "\n",
+    "from google.cloud import bigquery\n",
+    "from google.protobuf import json_format\n",
+    "from google.protobuf.struct_pb2 import Value\n",
+    "import json\n",
+    "import numpy as np"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "4f191522-fef0-4307-a3d0-aa856aacea29",
+   "metadata": {},
+   "source": [
+    "Clients:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "id": "d407421b-64ea-4343-a986-824316435860",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "aiplatform.init(project=PROJECT_ID, location=REGION)\n",
+    "bigquery = bigquery.Client()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "8d91c676-6374-4068-8d4d-812940d34314",
+   "metadata": {},
+   "source": [
+    "Parameters:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "id": "dc187b51-af97-4986-b10c-801c1f93798e",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "TIMESTAMP = datetime.now().strftime(\"%Y%m%d%H%M%S\")\n",
+    "BUCKET = PROJECT_ID\n",
+    "URI = f\"gs://{BUCKET}/{DATANAME}/models/{NOTEBOOK}\"\n",
+    "DIR = f\"temp/{NOTEBOOK}\""
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "id": "b97274fb-2bdc-464d-86e2-e7a646f5d936",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "'716133108361-compute@developer.gserviceaccount.com'"
+      ]
+     },
+     "execution_count": 5,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "# Give service account roles/storage.objectAdmin permissions\n",
+    "# Console > IMA > Select Account <projectnumber>-compute@developer.gserviceaccount.com > edit - give role\n",
+    "SERVICE_ACCOUNT = !gcloud config list --format='value(core.account)' \n",
+    "SERVICE_ACCOUNT = SERVICE_ACCOUNT[0]\n",
+    "SERVICE_ACCOUNT"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "216391f9-6a15-4887-b0b4-8707fc58e68f",
+   "metadata": {},
+   "source": [
+    "Enviroments:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "id": "8785f839-a20c-4c4b-ab3b-23a59eef19d4",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "!rm -rf {DIR}\n",
+    "!mkdir -p {DIR}"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "24f78cca-ac29-4cb9-9cfc-f2b3d62ce6bc",
+   "metadata": {},
+   "source": [
+    "---\n",
+    "## Custom Components (KFP)\n",
+    "Vertex AI Pipelines are made up of components that run independently with inputs and outputs that connect to form a graph - the pipeline. For this notebook workflow the following custom components are used to orchestrate the training of a challenger model, evaluating the challenger and an existing model, comparing them based on model metrics, if the challenger is better then replace the model already deployed on an existing endpoint. These custom components are constructed as python functions!\n",
+    "\n",
+    "Model Metrics\n",
+    "* Get Predictions for Test data from BigQuery Model\n",
+    "* Calculate average precision for the precision-recall curve"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "id": "6c5a05ad-6912-46eb-b6c8-dec961250843",
+   "metadata": {},
+   "outputs": [
+    {
+     "ename": "NameError",
+     "evalue": "name 'var_target' is not defined",
+     "output_type": "error",
+     "traceback": [
+      "\u001b[0;31m---------------------------------------------------------------------------\u001b[0m",
+      "\u001b[0;31mNameError\u001b[0m                                 Traceback (most recent call last)",
+      "\u001b[0;32m/tmp/ipykernel_23966/2963691289.py\u001b[0m in \u001b[0;36m<module>\u001b[0;34m\u001b[0m\n\u001b[1;32m      7\u001b[0m      ), UNNEST(predicted_{var_target}_probs)\n\u001b[1;32m      8\u001b[0m    \u001b[0mWHERE\u001b[0m \u001b[0mlabel\u001b[0m\u001b[0;34m=\u001b[0m\u001b[0;36m1\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0;32m----> 9\u001b[0;31m    \"\"\"\n\u001b[0m\u001b[1;32m     10\u001b[0m \u001b[0mpred\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mbigquery\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mquery\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mquery\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mquery\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mto_dataframe\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n",
+      "\u001b[0;31mNameError\u001b[0m: name 'var_target' is not defined"
+     ]
+    }
+   ],
+   "source": [
+    " query = f\"\"\"\n",
+    "    SELECT {var_target}, predicted_{var_target}, prob, splits \n",
+    "    FROM ML.PREDICT (MODEL `{project}.{dataname}.{model}`,(\n",
+    "        SELECT *\n",
+    "        FROM `{project}.{dataname}.{dataname}_prepped`\n",
+    "        WHERE splits = 'TEST')\n",
+    "      ), UNNEST(predicted_{var_target}_probs)\n",
+    "    WHERE label=1\n",
+    "    \"\"\"\n",
+    "pred = bigquery.query(query = query).to_dataframe()\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "c460477f-f17f-4931-9b1e-9017e521d5cc",
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "5cf83722-8454-4a81-9ed4-a844b45a3cf2",
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "570a212b-115a-4481-b35a-6922c6eb4c34",
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "environment": {
+   "kernel": "python3",
+   "name": "tf2-gpu.2-3.m93",
+   "type": "gcloud",
+   "uri": "gcr.io/deeplearning-platform-release/tf2-gpu.2-3:m93"
+  },
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.7.12"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
