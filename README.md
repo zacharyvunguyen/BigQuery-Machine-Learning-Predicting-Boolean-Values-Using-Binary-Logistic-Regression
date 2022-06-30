@@ -1,6 +1,7 @@
 # nguyen-demo5: Vertex AI - BigQuery Machine Learning
 ---
 ## Predicting Boolean Values Using Binary Logistic Regression
+- Predict whether a taxi driver will receive a tip at the end of the taxi ride.
 ------------
 ### Overview:
 - Introducing the business scenario
